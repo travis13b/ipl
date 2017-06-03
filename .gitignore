@@ -1,0 +1,139 @@
+setwd("E:/MR/Ipl")
+
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+
+match=read.csv("matches.csv")
+ball=read.csv("deliveries.csv")
+
+#new features
+ball$dismissal_kind=ball$dismissal_kind %>% as.character()
+ball$wicket=ifelse((ball$dismissal_kind=="" | ball$dismissal_kind=="run out"),0,1)
+ball$dismissal=ifelse((ball$dismissal_kind==""),0,1)
+ball$dot=ifelse(ball$total_runs==0,1,0)
+ball$boundary=ifelse((ball$batsman_runs==4 | ball$batsman_runs==6),1,0)
+ball$singles=ifelse((ball$batsman_runs==1|ball$batsman_runs==2|ball$batsman_runs==3),1,0)
+
+#analysis for bowlers
+bowl=function(type){
+
+bowlers=as.data.frame(table(ball$bowler))
+colnames(bowlers)=c("Name","Total_balls")
+tmp1=aggregate(ball[,type],FUN=sum,by=list(ball$bowler))
+colnames(tmp1)=c("Name",type)
+bowlers=merge(bowlers,tmp1)
+bowlers=arrange(bowlers,desc(Total_balls))
+bowlers$wpb=bowlers[,type]/bowlers$Total_balls
+
+p=(ggplot(bowlers[1:(nrow(bowlers)/20),],aes(reorder(Name,-wpb),eval(parse(text=type)),fill=wpb))
+  +geom_bar(stat="identity")+xlab("Bowlers")+ylab(paste("Total",type))
+  +scale_fill_continuous(guide=guide_legend(title=paste(type,"per ball")))
+  +ggtitle(paste("20% of most used bowlers with max",type)))
+  theme(axis.text.x=element_text(angle=75,hjust=1),plot.title=element_text(size=12))
+  
+return(p)  
+
+}
+
+#over number vs wicket/boundary/singles
+over=function(type){
+
+p=(ggplot(ball[ball[,type]==1 & ball$inning<3,],aes(factor(over),fill=factor(inning)))+
+  geom_bar(color="black")+xlab("Over")+ylab(paste(type,"Count"))+
+  ggtitle(paste("Over number vs",type)))
+  theme(plot.title=element_text(size=12))
+return(p)
+  }
+
+#analysis 20% of most used bowlers on runs
+a=bowl("wide_runs")  
+a1=bowl("noball_runs")
+a2=bowl("extra_runs")
+a3=bowl("total_runs")
+grid.arrange(a,a1,a2,a3,nrow=2,ncol=2)
+
+#analysis 20% of most used bowlers on per deliveries
+b=bowl("boundary")
+b1=bowl("singles")
+b2=bowl("dot")
+b3=bowl("wicket")
+grid.arrange(b,b1,b2,b3,nrow=2, ncol=2)
+
+#overall treand for 20 overs for 2 innings
+a=over("wicket")
+b=over("boundary")
+c=over("dot")
+d=over("singles")
+grid.arrange(a,b,c,d,nrow=2,ncol=2)
+
+#new features for matches
+match$toss_winner=match$toss_winner %>% as.character()
+match$winner=match$winner %>% as.character()
+match$winner=ifelse(match$winner=="","Tied",match$winner) %>% as.factor()
+match$toss_match=ifelse(match$toss_winner==match$winner,1,0) %>% as.factor()
+match$winner_do=ifelse(match$win_by_runs>0,"bat","field") %>% as.factor()
+match$date=as.Date(match$date)
+match$day=weekdays(match$date) %>% as.ordered()
+match$season=match$season %>% as.factor()
+
+#who can keep their nerves
+match$close=ifelse((match$win_by_runs<10 & match$win_by_runs>0)|(match$win_by_wickets<3 &match$win_by_wickets>0),1,0)
+
+ggplot(match[match$close==1,],aes(winner,close,fill=winner))+
+geom_bar(color="black",width=0.7,stat="identity")+
+xlab("winning team")+ylab("number of close wins")+
+theme(legend.position="none")+ggtitle("teams who can handle nerves")+
+theme(axis.text.x=element_text(angle=75,hjust=1))
+
+#
+win=function(type,title){
+p=(ggplot(match,aes(reorder(winner,date),fill=eval(parse(text=type))))+
+   geom_bar(color="black",width=0.8,position=position_dodge(width=0.8))+
+   xlab("winning team")+ylab("number of wins")+
+   ggtitle(title)+
+   scale_fill_discrete(guide=guide_legend(title=type))+
+   theme(axis.text.x=element_text(angle=75,hjust=1)))
+return(p)
+}
+
+w1=win("toss_match","do winning team win toss?")
+w2=win("winner_do","what do winning team do first?")
+grid.arrange(w1,w2,ncol=2)
+win("day", "Which day do the team has maximum wins?")
+win("season", "Number of wins of teams per season")
+
+#which team wins in which city
+ggplot(match[match$season!=2009,],aes(factor(winner),fill=city))+
+geom_bar(color="black",width=0.7)+
+xlab("Winning Team") + ylab("Number of wins") +
+ggtitle("Which team wins in which city?") + 
+theme(axis.text.x=element_text(angle=75, hjust=1))
+
+team=function(team){
+match$loser=ifelse(as.character(match$winner)==as.character(match$team1),as.character(match$team2),
+                    as.character(match$team1)) %>% as.factor()
+p1=(ggplot(match[match$winner==team,],aes(loser,fill=winner_do))+
+   geom_bar(color="black",width=0.7)+
+   xlab("winning team")+ylab("number of wins")+
+   ggtitle(paste(team,":most wins with teams vs chasing"))+
+   theme(axis.text.x=element_text(angle=75,hjust=1)))					
+
+   tmp1=match[match$winner==team | match$loser==team,]
+   tmp1$opponent=ifelse(tmp1$winner==team,as.character(tmp1$loser),as.character(tmp1$winner)) %>% as.factor()
+   tmp1$winlos=ifelse(tmp1$winner==team,1,0) %>% as.factor()
+   
+p2=(ggplot(tmp1,aes(opponent,fill=winlos))+
+    geom_bar(color="black",width=0.7,position=position_dodge(width=0.8))+
+	xlab("winning team")+ylab("number of wins")+
+	ggtitle(paste(team,":wins and loses"))+
+	theme(axis.text.x=element_text(angle=75,hjust=1))) 
+p=grid.arrange(p1,p2,ncol=2)
+return(p)	
+   }
+
+   for(c in levels(match$winner)){
+   if(c!="Tied")
+   {team(c)}
+   }
+team("Chennai Super Kings")   
